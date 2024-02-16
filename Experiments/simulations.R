@@ -1,9 +1,43 @@
+require(copula)
+require(causalBatch)
+
+generate_correlated_betas <- function(batches, alphas1, betas1, alphas2, betas2, corr.mtx=NULL) {
+  n = length(batches)
+  ndim <- ifelse(is.null(dim(corr.mtx)), 1, nrow(corr.mtx))
+  if (ndim > 1) {
+    # Create a Gaussian copula with the specified correlation
+    copula_obj <- normalCopula(param=P2p(corr.mtx), dim = ndim, dispstr="un")
+    
+    # Generate uniform samples from the copula
+    u <- rCopula(n, copula_obj)
+  } else {
+    u <- matrix(runif(n), ncol=1)
+  }
+  
+  # Transform uniform samples to beta-distributed variables
+  Xs <- do.call(cbind, lapply(1:ndim, function(k) {
+    sapply(1:length(batches), function(i) {
+      ifelse(batches[i] == 0, qbeta(u[i,k], alphas1[k], betas1[k]), 
+             qbeta(u[i,k], alphas2[k], betas2[k]))
+    })
+  }))
+  return(matrix(Xs, ncol=ndim))
+}
+
 sim_sigmoid <- function(n=100, pi=.5, eff_sz=1, alpha=2, d=2, unbalancedness=1, 
-                        a=4, b=8, err=1/2, nbreaks=200) {
+                        a=4, b=8, err=1/2, unobs.cor=NULL, nbreaks=200) {
   batches <- rbinom(n=n, size=1, prob=pi)
   
   beta <- alpha*unbalancedness
-  xs <- causalBatch:::cb.sims.covar_generator(batches, alpha, beta, beta, alpha)
+  if (!is.null(unobs.cor)) {
+    corr.mtx <- diag(2)
+    corr.mtx[1,2] = cor.mtx[2,1] = unobs.cor
+    alphas <- c(alphas, alphas); betas <- c(betas, betas)
+  } else {
+    corr.mtx = diag(1)
+    alphas <- alpha; betas <- beta
+  }
+  xs <- apply(generate_correlated_betas(batches, alphas, betas, betas, alphas, corr.mtx=corr.mtx), 1, mean)
   scale_off <- seq(1/d, 1/d^2, length.out=d)
   ys <- sapply(1:d, function(k) {
     sapply(1:length(xs), function(i) {
@@ -25,18 +59,26 @@ sim_sigmoid <- function(n=100, pi=.5, eff_sz=1, alpha=2, d=2, unbalancedness=1,
     ytrue <- matrix(ytrue, ncol=1)
   }
   
-  return(list(Ys=ys, Ts=factor(batches), Xs=xs,
+  return(list(Ys=ys, Ts=factor(batches), Xs=xs, batch_effect=scale_off*eff_sz,
               x.bounds=c(-1, 1), Ytrue=ytrue, Xtrue=xtrue, 
               Ttrue=factor(batch_true,levels=levels(batches)),
               Overlap=causalBatch:::cb.sims.get_beta_overlap(alpha, beta, beta, alpha)))
 }
 
 sim_linear <- function(n=100, pi=.5, eff_sz=1, alpha=2, d=2, unbalancedness=1, 
-                       a=2, b=1, err=1/2, nbreaks=200) {
+                       a=2, b=1, err=1/2, unobs.cor = NULL, nbreaks=200) {
   batches <- rbinom(n=n, size=1, prob=pi)
   
   beta <- alpha*unbalancedness
-  xs <- causalBatch:::cb.sims.covar_generator(batches, alpha, beta, beta, alpha)
+  if (!is.null(unobs.cor)) {
+    corr.mtx <- diag(2)
+    corr.mtx[1,2] = cor.mtx[2,1] = unobs.cor
+    alphas <- c(alphas, alphas); betas <- c(betas, betas)
+  } else {
+    corr.mtx = diag(1)
+    alphas <- alpha; betas <- beta
+  }
+  xs <- apply(generate_correlated_betas(batches, alphas, betas, betas, alphas, corr.mtx=corr.mtx), 1, mean)
   scale_off <- seq(1/d, 1/d^2, length.out=d)
   ys <- sapply(1:d, function(k) {
     sapply(1:length(xs), function(i) {
@@ -58,7 +100,7 @@ sim_linear <- function(n=100, pi=.5, eff_sz=1, alpha=2, d=2, unbalancedness=1,
     ytrue <- matrix(ytrue, ncol=1)
   }
   
-  return(list(Ys=ys, Ts=factor(batches), Xs=xs,
+  return(list(Ys=ys, Ts=factor(batches), Xs=xs, batch_effect=scale_off*eff_sz,
               x.bounds=c(-1, 1), Ytrue=ytrue, Xtrue=xtrue, 
               Ttrue=factor(batch_true,levels=levels(batches)),
               Overlap=causalBatch:::cb.sims.get_beta_overlap(alpha, beta, beta, alpha)))
@@ -66,11 +108,19 @@ sim_linear <- function(n=100, pi=.5, eff_sz=1, alpha=2, d=2, unbalancedness=1,
 
 
 sim_impulse <- function(n=100, pi=.5, eff_sz=1, alpha=2, d=2, unbalancedness=1, 
-                       a=.5, b=1/2, c=4, nbreaks=200) {
+                       a=.5, b=1/2, c=4, unobs.cor=NULL, nbreaks=200) {
   batches <- rbinom(n=n, size=1, prob=pi)
   
   beta <- alpha*unbalancedness
-  xs <- causalBatch:::cb.sims.covar_generator(batches, alpha, beta, beta, alpha)
+  if (!is.null(unobs.cor)) {
+    corr.mtx <- diag(2)
+    corr.mtx[1,2] = cor.mtx[2,1] = unobs.cor
+    alphas <- c(alphas, alphas); betas <- c(betas, betas)
+  } else {
+    corr.mtx = diag(1)
+    alphas <- alpha; betas <- beta
+  }
+  xs <- apply(generate_correlated_betas(batches, alphas, betas, betas, alphas, corr.mtx=corr.mtx), 1, mean)
   scale_off <- seq(1/d, 1/d^2, length.out=d)
   ys <- sapply(1:d, function(k) {
     sapply(1:length(xs), function(i) {
@@ -92,7 +142,7 @@ sim_impulse <- function(n=100, pi=.5, eff_sz=1, alpha=2, d=2, unbalancedness=1,
     ytrue <- matrix(ytrue, ncol=1)
   }
   
-  return(list(Ys=ys, Ts=factor(batches), Xs=xs,
+  return(list(Ys=ys, Ts=factor(batches), Xs=xs, batch_effect=scale_off*eff_sz,
               x.bounds=c(-1, 1), Ytrue=ytrue, Xtrue=xtrue, 
               Ttrue=factor(batch_true,levels=levels(batches)),
               Overlap=causalBatch:::cb.sims.get_beta_overlap(alpha, beta, beta, alpha)))
