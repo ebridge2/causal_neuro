@@ -50,7 +50,7 @@ impulse.xfm <- function(Xs, a=1/2, b=1/2, c=4) {
 }
 
 oracle.pois <- function(Ys, Ts, Xs, xfm=c(), xfm.params=list(), ...) {
-  Xs.oracle <- do.call(xfm, c(list(Xs), xfm.params))
+  Xs.oracle <- do.call(xfm, c(list(apply(Xs, 1, mean)), xfm.params))
   
   mod <- list()
   for (k in 1:dim(Ys)[2]) {

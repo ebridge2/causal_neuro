@@ -12,6 +12,7 @@ require(gridExtra)
 require(ggpubr)
 source('./simulations.R')
 source('./combat_seq_return.R')
+source('./est_methods.R')
 ```
 
 ```{r}
@@ -134,4 +135,45 @@ row.34 <- sim_sum %>%
 grid.arrange(row1, row2, row.34, heights=c(1, 1, 2), nrow=3)
 ```
 
+# Simulations with confounding
+
+```{r}
+eff_szs <- c("Effect"=1, "No Effect"=0)
+unbalancednesses <- seq(1, 4, length.out=8)
+cors <- c(-.6, 0, .6)
+d = 1; n=200; R = 20
+oracle_xfms <- list("Linear"=linear.xfm, "Non-Linear"=sigmoid.xfm, "Non-Monotone"=impulse.xfm)
+
+sim_results <- do.call(rbind, lapply(names(simulations), function(simn) {
+  sim_fn <- simulations[[simn]]
+  do.call(rbind, lapply(cors, function(cor) {
+    do.call(rbind, lapply(names(eff_szs), function(eff_szn) {
+      eff_sz <- eff_szs[[eff_szn]]
+      print(sprintf("Context: %s, Effect Size: %.3f, Correlation: %.3f", simn, eff_sz, cor))
+      do.call(rbind, lapply(unbalancednesses, function(unbalancedness) {
+        do.call(rbind, mclapply(1:R, function(r) {
+          if (r %% 100 == 0) {
+            print(sprintf("Finished %d out of %d...", r, R))
+          }
+          sim <- do.call(sim_fn, list(unbalancedness=unbalancedness, n=n, d=d, eff_sz=eff_sz, unobs.cor=cor))
+          do.call(rbind, lapply(names(methods), function(methn) {
+            tryCatch({
+              if (methn == "oPois") {
+                mod <- suppressWarnings(do.call(methods[[methn]], list(sim$Ys, sim$Ts, sim$Xs, xfm=oracle_xfms[[simn]], nstrata=5)))
+              } else {
+                mod <- suppressWarnings(do.call(methods[[methn]], list(sim$Ys, sim$Ts, sim$Xs[,1,drop=FALSE], nstrata=5)))
+              }
+              return(data.frame(Context=simn, Correlation=cor, `Effect Size`=eff_sz, Overlap=sim$Overlap, Method=methn, i=r,
+                                Error=abs(eff_sz - mod$fit[[1]]$coefficients["Batch1"])))
+              }, error=function(e) {
+                return(data.frame(Context=simn, Correlation=cor, `Effect Size`=eff_sz, Overlap=sim$Overlap, Method=methn, i=r, Error=NaN))
+            })
+          }))
+        }, mc.cores = parallel::detectCores() - 1))
+      }))
+  }))
+  }))
+}))
+saveRDS(sim_results, file="../data/simulations/est_sims_confound.rds")
+```
 

@@ -106,7 +106,6 @@ sim_linear <- function(n=100, pi=.5, eff_sz=1, alpha=2, d=2, unbalancedness=1,
               Overlap=causalBatch:::cb.sims.get_beta_overlap(alpha, beta, beta, alpha)))
 }
 
-
 sim_impulse <- function(n=100, pi=.5, eff_sz=1, alpha=2, d=2, unbalancedness=1, 
                        a=.5, b=1/2, c=4, unobs.cor=NULL, nbreaks=200) {
   batches <- rbinom(n=n, size=1, prob=pi)
