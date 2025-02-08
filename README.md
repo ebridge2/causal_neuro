@@ -23,6 +23,13 @@ Over the past two decades, considerable strides have been made in advancing neur
 
 ## System Requirements
 
+This manuscript requires only a standard computer with enough RAM to support the operations defined by a user. For minimal performance, this will be a computer with about 2 GB of RAM. For optimal performance, we recommend a computer with the following specs:
+
+RAM: 16+ GB  
+CPU: 4+ cores, 3+ GHz/core
+
+The runtimes below are generated using a computer with the recommended specs (16 GB RAM, 4 cores@3 GHz) and internet of speed 100 Mbps.
+
 ## Installation Guide
 
 ## Results and Figure Reproduction
