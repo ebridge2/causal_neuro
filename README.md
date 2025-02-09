@@ -17,9 +17,9 @@ Over the past two decades, considerable strides have been made in advancing neur
 ## Repo Contents
 
 - [R](./R): R helper functions for experiments.
-- [experiments](./experiments): analysis, inference, and plotting code for the figures in our manuscript.
+- [Experiments](./experiments): analysis, inference, and plotting code for the figures in our manuscript.
 - [data](./data): data from simulations used during experiments.
-- [figures](./figures): figures for our manuscript.
+- [Figures](./figures): figures for our manuscript.
 
 ## System Requirements
 
