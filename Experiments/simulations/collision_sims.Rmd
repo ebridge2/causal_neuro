@@ -14,6 +14,7 @@ require(tidyverse)
 require(ggplot2)
 require(grid)
 require(gridExtra)
+require(parallel)
 source("./collision_methods.R")
 source("./collider_sims.R")
 source("./utilities.R")
@@ -63,7 +64,7 @@ sim_results <- readRDS("../data/simulations/collider_sims.rds")
 
 sim_results <- sim_results %>%
   mutate(Truth=1) %>%
-  mutate(Error=abs(Estimate - Truth)/Truth)
+  mutate(Error=abs(Estimate - Truth))
 
 processed <- sim_results %>%
   group_by(Context, Method, n) %>%
@@ -102,7 +103,6 @@ lo.plot <- processed %>%
 md.methods <- list("oracle"=oracle.collision.md, "naive oracle"=oracle.naive.collision.md, "conditional"=conditional.collision.md, 
                 "filtered"=filtering.collision.md, "drtmle"=nebel.collision.md)
 
-simulations <- list("Linear"=collider.sim_linear, "Non-Linear"=collider.sim_nonlinear, "Non-Monotone"=collider.sim_nonmonotone)
 batch.cols <- c("0"="#d95f02", "1"="#7570b3")
 md.method.cols <- c("conditional"="#916e99", "filtered"="#916e99", "oracle"="#DD0000", "naive oracle"="#DD0000",
                  "drtmle"="#bf9000")
@@ -120,7 +120,7 @@ sim_results <- do.call(rbind, lapply(names(simulations), function(simn) {
   do.call(rbind, lapply(ns, function(n) {
     print(sprintf("Simulation: %s, SS: %d", simn, n))
     sim_true <- do.call(simulations[[simn]], list(n=ntrue, confounding=0.2))
-    phi.star <- mean(sim_true$Ttrue[sim_true$Ys == 1]) - mean(sim_true$Ttrue[sim_true$Ys == 0])
+    phi.star <- 0.8*(mean(sim_true$Ttrue[sim_true$Ys == 1]) - mean(sim_true$Ttrue[sim_true$Ys == 0]))
     do.call(rbind, mclapply(1:R, function(i) {
       sim <- do.call(simulations[[simn]], list(n=n, confounding=0.2))
       do.call(rbind, lapply(names(methods), function(methn) {
@@ -143,7 +143,7 @@ saveRDS(sim_results, file="../data/simulations/collider_sims_md.rds")
 sim_results <- readRDS("../data/simulations/collider_sims_md.rds")
 
 sim_results <- sim_results %>%
-  mutate(Error=abs(Estimate - Truth)/Truth)
+  mutate(Error=(Estimate - Truth))
 
 processed <- sim_results %>%
   group_by(Context, Method, n) %>%
@@ -181,20 +181,64 @@ plt.collision <- grid.arrange(lo.plot, md.plot, nrow=2)
 ggsave("../Figure_dump/sims_collider_draft.pdf", plt.collision, width=10, height=4)
 ```
 
+# Normalized Error (Combined)
+
+```{r}
+comb.method.cols <- c("conditional"="#916e99", "filtered"="#916e99", "oracle"="#DD0000", 
+                 "matching"="#22bc22", "ipw"="#22bc22", "drtmle"="#bf9000")
+
+comb.method.lines <- c("oracle"="solid", "conditional"="solid", "filtered"="dashed", 
+                 "matching"="solid", "ipw"="dashed", "drtmle"="solid")
+
+sim_results <- readRDS("../data/simulations/collider_sims.rds") %>%
+  mutate(Truth=1) %>%
+  rbind(readRDS("../data/simulations/collider_sims_md.rds") %>% filter(Method == "drtmle") %>% mutate(Truth = 5/4 * Truth)) %>%
+  mutate(Error=abs(Estimate - Truth)/Truth)
+
+processed <- sim_results %>%
+  group_by(Context, Method, n) %>%
+  summarize(Estimate.Mean=mean(Estimate), Error.Mean=mean(Error), Estimate.SE=sd(Estimate)/sqrt(n()), Error.SE=sd(Error)/sqrt(n())) %>%
+  pivot_longer(
+      cols = c(Estimate.Mean, Error.Mean, Estimate.SE, Error.SE),
+      names_to = c("Name", "Measure"),
+      names_sep = "\\.",
+      values_to = "Value"
+  ) %>%
+  pivot_wider(
+      names_from = Measure,
+      values_from = Value
+  )
+
+comb.plot <- processed %>%
+  mutate(Method=factor(Method)) %>%
+  filter(Name == "Error") %>%
+  ggplot(aes(x=n, y=Mean, group=Method, color=Method, linetype=Method)) +
+  geom_line() +
+  #geom_errorbar(aes(ymin=Mean - SE, ymax=Mean + SE)) +
+  theme_bw() +
+  geom_line(linewidth=1.05) +
+  scale_color_manual(values=comb.method.cols) +
+  scale_x_continuous(name="Number of Samples", trans="log2") +
+  scale_linetype_manual(values=comb.method.lines) +
+  coord_cartesian(ylim=c(0, 1), expand=FALSE) +
+  facet_grid(Name ~ Context, scales="free_y") +
+  theme_bw() +
+  theme(panel.grid=element_blank(), strip.background=element_blank())
+```
+
 # Statistical Power Investigations
 
 ```{r}
-pow.methods <- list("oracle"=oracle.collision.lo, "conditional, lo"=conditional.collision.lo, 
-                "filtered, lo"=filtering.collision.lo, "conditional, md"=conditional.collision.md,
-                "filtered, md"=filtering.collision.md, "drtmle"=nebel.collision.md,
+pow.methods <- list("oracle"=oracle.collision.lo, "conditional"=conditional.collision.lo, 
+                "filtered"=filtering.collision.lo, "drtmle"=nebel.collision.md,
                 "matching"=causal.matching.lo, "ipw"=causal.ipw.lo)
 
-md.method.cols <- c("conditional, lo"="#916e99", "filtered, lo"="#916e99",
-                    "oracle"="#DD0000", "conditional, md"="#916e99", "filtered, md"="#916e99",
+pow.method.cols <- c("conditional"="#916e99", "filtered"="#916e99",
+                    "oracle"="#DD0000",
                     "drtmle"="#bf9000", "matching"="#22bc22", "ipw"="#22bc22")
 
-md.method.lines <- c("oracle"="solid", "conditional, lo"="solid", "filtered, lo"="dashed", 
-                    "drtmle"="solid", "conditional, md"="", "filtered, md"="",
+pow.method.lines <- c("oracle"="solid", "conditional"="solid", "filtered"="dashed", 
+                    "drtmle"="solid",
                     "matching"="solid", "ipw"="dashed")
 n.sens_spec <- 512
 ```
@@ -245,9 +289,10 @@ sens.plot <- processed %>%
   #geom_errorbar(aes(ymin=Mean - SE, ymax=Mean + SE)) +
   theme_bw() +
   geom_line(linewidth=1.05) +
-  scale_color_manual(values=md.method.cols) +
+  scale_color_manual(values=pow.method.cols) +
+  geom_hline(aes(yintercept=alpha), color="black", linetype="dashed") +
   scale_x_continuous(name="Effect Size") +
-  scale_linetype_manual(values=md.method.lines) +
+  scale_linetype_manual(values=pow.method.lines) +
   coord_cartesian(ylim=c(0, 1), expand=FALSE) +
   facet_grid(. ~ Context, scales="free_y") +
   theme_bw() +
@@ -257,7 +302,8 @@ sens.plot <- processed %>%
 ### Specificity as a function of level of confounding
 
 ```{r}
-confounds.sz <- seq(0, 0.6, length.out=7)
+R=200
+confounds.sz <- seq(0, 1, length.out=11)
 
 sim_results <- do.call(rbind, lapply(names(simulations), function(simn) {
   do.call(rbind, lapply(confounds.sz, function(confound.sz) {
@@ -273,8 +319,41 @@ sim_results <- do.call(rbind, lapply(names(simulations), function(simn) {
           return(data.frame(Context=simn, Method=methn, Confounding=confound.sz, Idx=i, estimate=NaN, pvalue=NaN))
         })
       }))
-    }, mc.cores=parallel::detectCores() - 4))
+    }, mc.cores=parallel::detectCores() - 2))
   }))
 }))
 saveRDS(sim_results, file="../data/simulations/collider_sims_spec.rds")
+```
+
+```{r}
+alpha = .05
+sim_results <- readRDS("../data/simulations/collider_sims_spec.rds")
+
+sim_results <- sim_results %>%
+  mutate(Outcome = pvalue < alpha)
+
+processed <- sim_results %>%
+  group_by(Context, Method, Confounding) %>%
+  summarize(Power=mean(Outcome))
+
+spec.plot <- processed %>%
+  mutate(Method=factor(Method)) %>%
+  filter(!(Method %in% c("conditional, md", "filtered, md"))) %>%
+  ggplot(aes(x=Confounding, y=Power, group=Method, color=Method, linetype=Method)) +
+  geom_line() +
+  #geom_errorbar(aes(ymin=Mean - SE, ymax=Mean + SE)) +
+  theme_bw() +
+  geom_line(linewidth=1.05) +
+  scale_color_manual(values=pow.method.cols) +
+  geom_hline(aes(yintercept=alpha), color="black", linetype="dashed") +
+  scale_x_continuous(name="Confounding") +
+  scale_linetype_manual(values=pow.method.lines) +
+  coord_cartesian(ylim=c(0, 1), expand=FALSE) +
+  facet_grid(. ~ Context, scales="free_y") +
+  theme_bw() +
+  theme(panel.grid=element_blank(), strip.background=element_blank())
+```
+
+```{r}
+grid.arrange(comb.plot, sens.plot, spec.plot, nrow=3)
 ```
