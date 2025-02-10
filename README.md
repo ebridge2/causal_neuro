@@ -32,6 +32,24 @@ The runtimes below are generated using a computer with the recommended specs (16
 
 ## Installation Guide
 
+The functions contained herein were executed using `R` version `4.3.2`. With `R` installed, you can install the dependency packages from an `R` terminal (e.g., command line, or Rstudio) using:
+
+```
+packages <- c("causalBatch", "collapse", "copula", "drtmle", "EValue", 
+              "ggExtra", "ggpubr", "ggridges", "gridExtra", "jsonlite",
+              "lmtest", "MASS", "MatchIt", "nnet", "parallel", "patchwork",
+              "sandwich", "scales", "SuperLearner", "survey", "survival",
+              "tidyverse", "transport", "twang", "WeightIt")
+
+install.packages(packages)
+```
+
 ## Results and Figure Reproduction
 
+All of the figures for our paper can be reproduced by identifying the appropriate Figures from [Experiments](https://github.com/ebridge2/causal_neuro/tree/main/Experiments). 
+
 ## Citation
+
+To cite conclusions from this work, you can use the following MLA citation:
+
+Bridgeford, Eric W., Brian Caffo, Maya B. Mathur, and Russell A. Poldrack. "How Causal Perspectives Can Inform Problems in Computational Neuroscience."
