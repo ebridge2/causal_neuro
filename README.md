@@ -16,10 +16,8 @@ Over the past two decades, considerable strides have been made in advancing neur
 
 ## Repo Contents
 
-- [R](./R): R helper functions for experiments.
-- [Experiments](./experiments): analysis, inference, and plotting code for the figures in our manuscript.
-- [data](./data): data from simulations used during experiments.
-- [Figures](./figures): figures for our manuscript.
+- [Exploratory](./Exploratory): Rmarkdown documents with detailed causal exploratory analyses.
+- [Figures](./Figures): figures for our manuscript.
 
 ## System Requirements
 
@@ -34,22 +32,19 @@ The runtimes below are generated using a computer with the recommended specs (16
 
 The functions contained herein were executed using `R` version `4.3.2`. With `R` installed, you can install the dependency packages from an `R` terminal (e.g., command line, or Rstudio) using:
 
-```
-packages <- c("causalBatch", "collapse", "copula", "drtmle", "EValue", 
-              "ggExtra", "ggpubr", "ggridges", "gridExtra", "jsonlite",
-              "lmtest", "MASS", "MatchIt", "nnet", "parallel", "patchwork",
-              "sandwich", "scales", "SuperLearner", "survey", "survival",
-              "tidyverse", "transport", "twang", "WeightIt")
+```r
+packages <- c("collapse", "dagitty", "ggdag", "ggExtra", "ggridges", 
+              "gridExtra", "jsonlite", "knitr", "patchwork", "tidyverse")
 
 install.packages(packages)
 ```
 
 ## Results and Figure Reproduction
 
-All of the figures for our paper can be reproduced by identifying the appropriate Figures from [Experiments](https://github.com/ebridge2/causal_neuro/tree/main/Experiments). 
+All of the figures for the Appendix of our paper can be reproduced by identifying the appropriate section from [Exploratory](https://github.com/ebridge2/causal_neuro/tree/main/Exploratory). For real-data analyses using the ABCD study, you will need the appropriate files indicated for the corresponding analyses placed in the folder `<path/to/this/repository>/data/abcd`.
 
 ## Citation
 
 To cite conclusions from this work, you can use the following MLA citation:
 
-Bridgeford, Eric W., Brian Caffo, Maya B. Mathur, and Russell A. Poldrack. "How Causal Perspectives Can Inform Problems in Computational Neuroscience."
+Bridgeford, Eric W., Brian Caffo, Maya B. Mathur, and Russell A. Poldrack. "How Causal Perspectives Can Inform Problems in Neuroscience Data Analysis." arXiv (2025).
