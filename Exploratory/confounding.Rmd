@@ -1,0 +1,973 @@
+---
+title: "Appendix A.3.3: How causal perspectives can inform neuroscience data analysis"
+author: "Eric W. Bridgeford"
+date: "2025-08-01"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: false
+    fig_crop: true
+    highlight: tango
+  html_document: default
+header-includes:
+  - \usepackage{microtype}
+  - \usepackage{ragged2e}
+  - \raggedright
+  - \pagestyle{empty}
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  dpi = 300,
+  out.width = "100%",
+  fig.align = "center",
+  dev = "cairo_pdf"
+)
+```
+
+This notebook focuses on exploratory analyses one might use to assess violations of crucial identification assumptions.
+
+```{r}
+require(tidyverse)
+require(dplyr)
+require(ggplot2)
+require(jsonlite)
+require(ggridges)
+require(patchwork)
+require(collapse)
+require(grid)
+require(gridExtra)
+require(knitr)
+require(ggExtra)
+require(ggdag)
+require(dagitty)
+```
+
+# Visualizations for conditional ignorability (no unmeasured confounding)
+
+For assessing the conditional ignorability assumption, we will build off the sleep quality/white matter integrity example from Section 2. Let's start with setting up a graph using DAGitty. The exposure is Sleep Quality, and the outcome is WM Integrity. We will begin with the simplified DAG in Figure 2(A). We have a single common cause, Age. In this case, we will illustrate what happens when no variables are conditioned on.
+
+```{r, fig.height=3.5, fig.width=6}
+# Figure 2(A)
+dag_2a <- dagify(
+  # encode E -> Y; X1 -> Y
+  Y ~ E + X1,
+  # encode X1 -> E
+  E ~ X1,
+  exposure = "E",
+  outcome = "Y",
+  coords = list(x = c(E = 1, X1 = 2, Y = 3),
+                y = c(E = 1, X1 = 2, Y = 1))
+)
+
+# Plot Figure 2(A)
+ggdag(dag_2a) + 
+  theme_dag() + 
+  theme(text = element_text(color = "black")) +
+  scale_color_manual(values = c("black")) +
+  scale_fill_manual(values = c("white")) +
+  ggtitle("Figure 2(A): Observational Sleep Study (No conditioning)")
+```
+We check whether causal identification is possible using dagitty::isAdjustmentSet(), which tests whether a given set of variables is sufficient to block all backdoor paths between exposure and outcome. Our adjustment set, $Z$, here is an empty list (no conditioning):
+
+```{r}
+Z <- list()
+# Check if conditional ignorability satisfied
+sprintf("Causal identification possible: %s", isAdjustmentSet(dag_2a, Z,
+                                                              exposure = "E", 
+                                                              outcome = "Y"))
+```
+
+We can also use `dagitty::adjustmentSets()` to obtain a proper adjustment set:
+
+```{r}
+sprintf("Smallest adjustment set: %s", adjustmentSets(dag_2a, exposure="E", 
+                                                      outcome="Y"))
+```
+
+Which tells us to include `X1` in an adjustment set. Let's include it:
+
+```{r}
+AdjSet <- list("X1")
+sprintf("Causal identification possible: %s", isAdjustmentSet(dag_2a, AdjSet, 
+                                                              exposure = "E", 
+                                                              outcome = "Y"))
+```
+
+Next, we can use `ggdag::ggdag_adjustment_set()` to re-plot our DAG, with the adjustment set properly conditioned on:
+
+```{r, fig.height=3.5, fig.width=6}
+ggdag_adjustment_set(dag_2a, exposure = "E", outcome = "Y") + 
+  theme_dag() + 
+  theme(text = element_text(color = "black")) +
+  scale_color_manual(values = c("black", "black", "black")) +
+  scale_fill_manual(values = c("white", "white", "white")) +
+  ggtitle("Figure 2(B): Blocking backdoor paths\n(Age conditioned - sufficient adjustment)")
+```
+Figure 2(B) shows that conditioning on Age (indicated by the square) blocks the backdoor path, enabling causal identification. The lack of the backdoor path $E \leftarrow X_1 \rightarrow Y$ denotes that this path is blocked by the conditioning set.
+
+This is equivalently simple with more common causes, such as in Figure 2(C):
+
+```{r, fig.height=3.5, fig.width=6}
+# Figure 2(C)
+dag_2c <- dagify(
+  # encode E -> Y; X1 -> Y
+  Y ~ E + X1 + X2 + X3,
+  # encode X1 -> E
+  E ~ X1 + X2 + X3,
+  X3 ~ X1 + X2,
+  exposure = "E",
+  outcome = "Y",
+  coords = list(x = c(E = 1, X1 = 1, X2 = 2, X3 = 3, Y = 3),
+                y = c(E = 1, X1 = 1.5, X2 = 2, X3 = 1.5, Y = 1))
+)
+
+# Plot Figure 2(C)
+ggdag(dag_2c) + 
+  theme_dag() + 
+  theme(text = element_text(color = "black")) +
+  scale_color_manual(values = c("black")) +
+  scale_fill_manual(values = c("white")) +
+  ggtitle("Figure 2(C): Blocking backdoor paths with many variables\n(No conditioning)")
+```
+
+```{r}
+AdjSet <- list("X1", "X2", "X3")
+
+sprintf("Smallest adjustment set: %s", adjustmentSets(dag_2c, exposure="E", outcome="Y"))
+sprintf("Causal identification possible: %s", isAdjustmentSet(dag_2c, AdjSet, 
+                                                              exposure = "E",
+                                                              outcome = "Y"))
+```
+
+And illustrating with the adjustment set:
+
+```{r, fig.height=3.5, fig.width=6}
+ggdag_adjustment_set(dag_2c, exposure = "E", outcome = "Y") + 
+  theme_dag() + 
+  theme(text = element_text(color = "black")) +
+  scale_color_manual(values = c("black", "black", "black")) +
+  scale_fill_manual(values = c("white", "white", "white")) +
+  ggtitle("Figure 2(C): Blocking backdoor paths with many variables\n(Sufficient adjustment)")
+```
+
+Next, we will illustrate that, under certain contexts, proper adjustment sets may not include all variables. Let's consider the bottom half of Figure 2(D), where familial, financial, and work/life stressors affect the brain via cortisol:
+
+```{r, fig.height=3.5, fig.width=6}
+dag_2d_bottom <- dagify(
+  # encode E -> Y; X1 -> Y
+  Y ~ E + X4,
+  X4 ~ Z2 + Z3 + Z4,
+  E ~ X4 + Z2 + Z3 + Z4,
+  exposure = "E",
+  outcome = "Y",
+  coords = list(x = c(E = 1, X4 = 2, Z2 = 1, Z3 = 1.5, Z4 = 2, Y = 3),
+                y = c(E = 1, X4 = 0.25, Z2 = -.25, Z3 = -.5, Z4 = -.75, Y = 1))
+)
+
+# Plot Figure 2(D) -- bottom half
+ggdag(dag_2d_bottom) + 
+  theme_dag() + 
+  theme(text = element_text(color = "black")) +
+  scale_color_manual(values = c("black")) +
+  scale_fill_manual(values = c("white")) +
+  ggtitle("Figure 2(D): Backdoor paths with unmeasured variables")
+```
+Note that a minimal adjustment set is $X_4$:
+
+```{r, fig.height=3.5, fig.width=6}
+AdjSet <- list("X4")
+sprintf("Smallest adjustment set: %s", adjustmentSets(dag_2d_bottom,
+                                                    exposure="E", outcome="Y"))
+sprintf("Causal identification possible: %s", isAdjustmentSet(dag_2d_bottom, 
+                                                              AdjSet, 
+                                                              exposure = "E",
+                                                              outcome = "Y"))
+
+ggdag_adjustment_set(dag_2d_bottom, exposure = "E", outcome = "Y") + 
+  theme_dag() + 
+  theme(text = element_text(color = "black")) +
+  scale_color_manual(values = c("black", "black", "black")) +
+  scale_fill_manual(values = c("white", "white", "white")) +
+  ggtitle("Figure 2(D): Blocking backdoor paths with many variables\n(Sufficient adjustment)")
+```
+Even if $Z_2$, $Z_3$, and $Z_4$ are not measured, $X_4$ suffices for adjustment. When we include $Z_1$ (early childhood lead exposure), no sufficient adjustment set exists:
+
+```{r}
+dag_2d <- dagify(
+  # encode E -> Y; X1 -> Y
+  Y ~ E + X4 + Z1,
+  X4 ~ Z2 + Z3 + Z4,
+  E ~ X4 + Z1 + Z2 + Z3 + Z4,
+  exposure = "E",
+  outcome = "Y",
+  coords = list(x = c(E = 1, X4 = 2, Z1 =  2, Z2 = 1, Z3 = 1.5, Z4 = 2, Y = 3),
+                y = c(E = 1, X4 = 0.25, Z1 = 1.5, Z2 = -.25,
+                      Z3 = -.5, Z4 = -.75, Y = 1))
+)
+
+sprintf("Smallest adjustment set: %s", adjustmentSets(dag_2d,
+                                                    exposure="E", outcome="Y"))
+
+AdjSet <- list("X4")
+sprintf("Causal identification possible: %s", isAdjustmentSet(dag_2d, 
+                                                              AdjSet, 
+                                                              exposure = "E",
+                                                              outcome = "Y"))
+```
+
+When $Z_1$ (early childhood lead exposure) affects both the exposure and outcome but cannot be measured in adulthood, no adjustment set can block all backdoor paths. This demonstrates why some causal effects cannot be identified from observational data, regardless of analytical sophistication.
+
+# Visualizations for Positivity (Overlap)
+
+For assessing the positivity assumption, we will explore the ABCD study, a large multi-site neuroimaging consortium study. This example will build off the description from Appendix A.3, of batch effects. Here, the exposure/treatment are batches, the outcomes are neuroimaging measurements, and there are a large number of potential variables that may confound the relationship between batch and measurements. While this dataset is hypothetically balanced on certain covariates (investigators targeted individuals from certain age ranges, biological sex tends to be relatively fixed across batches), the datasets are still quite demographically different. 
+
+## Preparing the data
+
+To begin, we need to prepare our input dataset. This is the typical first step in an analysis, and generally entails three steps:
+1. Reading the data: finding your data sources. For many large or well-understood studies, like the ABCD dataset, this can be easy: you can often identify data sources from a google search. In some cases, however, this can be more challenging; if your task of interest is ambiguous, or if you aren't sure going in what datasets are suitable for your task, this might take an extensive amount of background reading.
+2. Understanding what you need: once you have your datasets, you have to map the available data to questions of interest that you have. This entails figuring out what sorts of questions your data can, or cannot, be used for, and may involve literature review, reading documentation about what is included with the data, or constructing DAGs to figure out what features you may need.
+
+For this experiment, the raw data is taken from the file, "DCAN Labs ABCD-BIDS Community Collection (ABCC)"; file "participants_v1.0.3". Fortunately, this dataset provides nearly all of the information that we will need for our experiments, and is quite nicely cleaned. 
+
+```{r}
+demo_key <- read_json("../data/abcd/demo_key.json")
+
+site_key <- unlist(demo_key$site$Levels)[1:21]
+match_key <- unlist(demo_key$matched_group$Levels)
+sex_key <- unlist(demo_key$sex$Levels)
+
+raw_demo_dat <- read_tsv("../data/abcd/demographics.tsv")
+```
+
+Data typically arrives extremely poorly formatted; If you get lucky, someone (in this case, DCAN labs) may have pre-formatted your data and cleaned it extensively. For this experiment, we won't need to do too much data cleaning, because the data has already been largely pre-cleaned. Our only step involves properly encoding non-definitive encodings (`NA`, failures to answer, etc). We also subset to the baseline ABCD data, rename several of the factors for readability, and add a unique color for each site which will later be used for visualizations below:
+
+```{r}
+# pre-process the data using the demographics key
+demo_dat <- raw_demo_dat %>%
+  rename("Latinx" = `Do you consider the child Hispanic/Latino/Latina?`,
+         "Black"=`Black/African American`) %>%
+  filter(site != "site22", site != "888") %>%
+  mutate(
+    White = ifelse(White == 1, 1, ifelse(White == 0, 0, NA)),
+    Black = ifelse(Black == 1, 1, ifelse(Black == 0, 0, NA)),
+    Chinese = ifelse(Chinese == 1, 1, ifelse(Chinese == 0, 0, NA)),
+    Vietnamese = ifelse(Vietnamese == 1, 1, ifelse(Vietnamese == 0, 0, NA)),
+    Filipino = ifelse(Filipino == 1, 1, ifelse(Filipino == 0, 0, NA)),
+    Japanese = ifelse(Japanese == 1, 1, ifelse(Japanese == 0, 0, NA)),
+    `Other Asian` = ifelse(`Other Asian` == 1, 1, 
+                           ifelse(`Other Asian` == 0, 0, NA)),
+    pc1=ifelse(pc1 != 888, pc1, NA),
+    pc2=ifelse(pc2 != 888, pc2, NA),
+    pc3=ifelse(pc3 != 888, pc3, NA),
+    parental_education=ifelse(parental_education %in% c(999, 777, 888),
+                              NA, parental_education),
+    Korean = ifelse(Korean == 1, 1, ifelse(Korean == 0, 0, NA)),
+    income = ifelse(income %in% c(777, 888, 999), NA, income),
+    anesthesia_exposure=ifelse(anesthesia_exposure == 888, NA, 
+                               ifelse(anesthesia_exposure > 0, 1, 0)),
+    site = fct_recode(factor(site), !!!setNames(names(site_key), site_key)),
+    male = ifelse(sex == 1, 1, ifelse(sex %in% c(2, 3, 4), 0, NA)),
+    matched_group = factor(matched_group),
+    Latinx=ifelse(Latinx == 1, 1, ifelse(Latinx == 2, 0, NA)),
+    handedness=ifelse(handedness == 1, 1, ifelse(handedness %in% c(2, 3), 0, NA))
+  ) %>%
+  filter(grepl("ses-baseline", session_id), matched_group %in% c(1, 2, 3)) %>%
+  mutate(Asian = as.numeric(Chinese + Vietnamese + Filipino + 
+                              Japanese + `Other Asian` + Korean > 0)) %>%
+  rename("Right-handed"=handedness) %>%
+  select(participant_id, site, male, White, Black, Asian, Latinx, age, income,
+         anesthesia_exposure, pc1, pc2, pc3, `Right-handed`, parental_education)
+
+# create a color vector for each site
+site_colors <- c(
+  "OHSU" = "#E31A1C", "UCSD" = "#1F78B4", "ROC" = "#33A02C", "WUSTL" = "#FF7F00",
+  "UMB" = "#6A3D9A", "UVM" = "#FFD700", "FIU" = "#A6CEE3", "UFL" = "#B2DF8A",
+  "LIBR" = "#FB9A99", "UMN" = "#FDBF6F", "VCU" = "#CAB2D6", "UTAH" = "#8B4513",
+  "CUB" = "#FF69B4", "MUSC" = "#00CED1", "CHLA" = "#32CD32", "UMICH" = "#FF1493",
+  "UCLA" = "#4169E1", "SRI" = "#FF8C00", "UPMC" = "#9932CC", "UWM" = "#008B8B",
+  "YALE" = "#DC143C"
+)
+```
+
+## The Core Idea
+
+Positivity requires that every type of participant could plausibly receive any exposure level. Mathematically, this means the probability of exposure $t$ given covariates $x$ is always positive:
+$$Pr\left(T=t \mid X=x\right) > 0$$
+
+**Equivalent condition**: Every covariate pattern appears in every exposure group (covariate overlap):
+
+$$f\left(x \mid T=t\right) > 0$$
+
+These are equivalent because of Bayes' theorem: if participants with characteristics $x$ never appear in treatment group $t$ (covariate overlap), then the probability of assignment with characteristics $x$ must be zero (positivity), and vice-versa. 
+
+When $x$ is multivariate, the joint condition $f(x \mid T=t) > 0$ has important implications. If the joint distribution has positive density, then all marginal distributions must also have positive density. Specifically:
+- Each univariate marginal: $f\left(x_j \mid T=t\right) > 0$ for all features $j$
+- Each bivariate marginal: $f\left(x_j, x_{j'} \mid T=t\right) > 0$ for all pairs $j, j'$
+
+This gives us a practical strategy: as a component of checking positivity, we can examine marginal distributions, since violations in any marginal indicate violations in the joint distribution.
+
+## Univariate overlap: histograms and density estimates
+
+Histograms provide the most direct visual assessment of univariate covariate overlap across treatment groups. For continuous variables like age, they immediately reveal whether all treatment groups include participants across the full range of each covariate. Typically, it is often valuable during exploratory stages to view the true values themselves; to this end, we will add rug plots to the histograms.
+
++ Intuitive interpretation: Easy to spot non-overlapping regions
++ Quick screening: Rapidly identify the most problematic variables
++ Quantitative precision: Can measure exact ranges and gaps
+
+Next, we'll look for some desirable, and undesirable, patterns. 
+
+### What to Look For (Violations)
+
+```{r, echo=FALSE, fig.height=2, fig.width=8}
+cols <- c("Site A"="#DD0000", "Site B"="#0000DD")
+set.seed(123)
+n <- 200
+data_bad <- data.frame(
+  Age = c(rnorm(n, 10, 1.5), rnorm(n, 20, 1.5)),
+  Site = rep(c("Site A", "Site B"), each = n)
+)
+
+ggplot(data_bad, aes(x = Age, fill = Site, color=Site)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 30) +
+  geom_rug(alpha=0.8, length=unit(0.1, "npc")) +
+  theme_bw() +
+  scale_fill_manual(values = cols) + scale_color_manual(values = cols) +
+  ggtitle("Complete Separation") +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_blank()
+    )
+```
+
++ Problem: No age overlap between groups
++ Implication: Cannot separate treatment effects from age effects
++ Action: Cannot estimate causal effects across age ranges
+
+```{r, echo=FALSE, fig.height=2, fig.width=8}
+cols <- c("Site A"="#DD0000", "Site B"="#0000DD")
+set.seed(123)
+data_bad <- data.frame(
+  Age = c(rnorm(n, 10, 1.5), rnorm(n, 14, 1.5)),
+  Site = rep(c("Site A", "Site B"), each = n)
+)
+
+ggplot(data_bad, aes(x = Age, fill = Site, color=Site)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 30) +
+  geom_rug(alpha=0.8, length=unit(0.1, "npc")) +
+  theme_bw() +
+  scale_fill_manual(values = cols) + scale_color_manual(values = cols) +
+  ggtitle("Minimal Separation") +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_blank()
+    )
+```
+
++ Problem: <5% of participants in overlapping region
++ Implication: Causal estimates rely heavily on extrapolation
++ Action: Consider restricting analysis to narrow overlap region
+
+```{r, echo=FALSE, fig.height=2, fig.width=8}
+cols <- c("Site A"="#DD0000", "Site B"="#0000DD")
+set.seed(123)
+data_bad <- data.frame(
+  Age = c(20*rbeta(n, 1, 1.8), 20*rbeta(n, 1.8, 1)),
+  Site = rep(c("Site A", "Site B"), each = n)
+)
+
+ggplot(data_bad, aes(x = Age, fill = Site, color=Site)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 30) +
+  geom_rug(alpha=0.8, length=unit(0.1, "npc")) +
+  theme_bw() +
+  scale_fill_manual(values = cols) + scale_color_manual(values = cols) +
+  ggtitle("Extreme Skew") +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_blank()
+    )
+```
+
++ Problem: Severe imbalance even with some overlap
++ Implication: Poor precision in minority regions
++ Action: Use propensity-aware methods or acknowledge limitations
+
+```{r, echo=FALSE, fig.height=2, fig.width=8}
+cols <- c("Site A"="#DD0000", "Site B"="#0000DD")
+
+set.seed(123)
+
+pi_A <- 0.6
+site_A_young <- rbinom(n, 1, pi_A)
+age_A <- ifelse(site_A_young == 1, 
+                rnorm(n, 10, 0.8),
+                rnorm(n, 16, 0.8))
+
+age_B <- rnorm(n, 13, 2)
+
+data_multimodal <- data.frame(
+  Age = c(age_A, age_B),
+  Site = rep(c("Site A", "Site B"), each = n)
+)
+
+ggplot(data_multimodal, aes(x = Age, fill = Site, color = Site)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 30) +
+  geom_rug(alpha = 0.8, length = unit(0.1, "npc")) +
+  theme_bw() +
+  scale_fill_manual(values = cols) + 
+  scale_color_manual(values = cols) +
+  ggtitle("Multimodal Separation") +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_blank()
+  )
+```
+
++ Problem: Sites recruited from different developmental stage populations
++ Implication: Cannot separate site effects from developmental stage effects  
++ Action: Investigate recruitment protocols; consider age-stratified analysis
+
+### What NOT to Worry About
+
+```{r, echo=FALSE, fig.height=2, fig.width=8}
+cols <- c("Site A"="#DD0000", "Site B"="#0000DD")
+set.seed(123)
+data_bad <- data.frame(
+  Age = c(20*rbeta(n, 1.5, 2), 20*rbeta(n, 2, 1.5)),
+  Site = rep(c("Site A", "Site B"), each = n)
+)
+
+ggplot(data_bad, aes(x = Age, fill = Site, color=Site)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 30) +
+  geom_rug(alpha=0.8, length=unit(0.1, "npc")) +
+  theme_bw() +
+  scale_fill_manual(values = cols) + scale_color_manual(values = cols) +
+  ggtitle("Different Means (with substantial overlap)") +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_blank()
+    )
+```
+
++ Status: Acceptable - substantial overlap exists
++ Note: Different means are expected in observational data
++ Action: Standard adjustment methods should work for identification (but perhaps inappropriate for consistent estimation)
+
+```{r, echo=FALSE, fig.height=2, fig.width=8}
+cols <- c("Site A"="#DD0000", "Site B"="#0000DD")
+set.seed(123)
+data_bad <- data.frame(
+  Age = c(rnorm(n, 10, 1.5), rnorm(n, 10.5, 3)),
+  Site = rep(c("Site A", "Site B"), each = n)
+)
+
+ggplot(data_bad, aes(x = Age, fill = Site, color=Site)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 30) +
+  geom_rug(alpha=0.8, length=unit(0.1, "npc")) +
+  theme_bw() +
+  scale_fill_manual(values = cols) + scale_color_manual(values = cols) +
+  ggtitle("Different Variances (with overlap)") +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_blank()
+    )
+```
+
++ Status: Acceptable - full range covered by at least one group
++ Note: Precision may vary across range
++ Action: Proceed with analysis, note precision differences; consider ATT or ATC
+
+### Working example -- ABCD
+
+As the ABCD study has a large number of potential exposures (here, sites), it would be rather messy to look at histograms as-per above for each site. Therefore, we will use succinct density estimates, with a single (uncolored) line for each exposure level. This will allow us to succinctly visualize covariate overlap.
+
+```{r, fig.height=3, fig.width=8}
+demo_dat %>%
+  ggplot(aes(age, group = site, color = site)) +
+    geom_density(alpha = 0.5) +
+    labs(x="Age (Months)", title="Comparison of age distributions of ABCD") +
+    theme_bw() +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      strip.background = element_blank()
+    ) +
+    scale_color_manual(values = site_colors)
+```
+
+Due to the number of exposures, this is still a bit hard to read; however, looking carefully, some obvious patterns arise. Some datasets have primarily younger children (e.g., the pink dataset, "LIBR"), some datasets have primarily intermediate aged children (e.g., the orange dataset, "WUSTL"), and some datasets have primarily older children (e.g., the gold dataset, "UMN"). The total range of ages here is about 2 years. Let's restrict our plot to these three sites to make this more obvious:
+
+```{r, fig.height=3, fig.width=8}
+demo_dat %>%
+  filter(site %in% c("WUSTL", "LIBR", "UMN")) %>%
+  ggplot(aes(age, group = site, color = site)) +
+    geom_density(alpha = 0.5) +
+    labs(x="Age (Months)",
+         title="Comparison of age distributions of ABCD (restricted)") +
+    theme_bw() +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      strip.background = element_blank()
+    ) +
+    scale_color_manual(values = site_colors)
+```
+
+## Contingency tables
+
+Contingency tables provide direct assessment of covariate overlap for categorical variables across treatment groups. For binary or categorical variables like sex, race, or anesthesia exposure, they immediately reveal whether all treatment groups include participants across all categories. Heatmaps make these patterns visually apparent, especially when dealing with many treatment groups.
+
++ Immediate detection: Empty cells indicate impossible combinations
++ Quantitative precision: Exact counts and proportions visible
++ Pattern recognition: Systematic imbalances become obvious
+
+### What to look for (Violations)
+
+```{r, echo=FALSE, fig.height=2, fig.width=5}
+n_sites <- 3
+n_per_site <- 100
+
+data_sex_bad <- data.frame(
+  Site = rep(c("Site A", "Site B", "Site C"), each = n_per_site),
+  Sex = c(rep("Male", n_per_site),
+          rep("Female", n_per_site),
+          rep("Male", n_per_site))
+) %>%
+  group_by(Site, Sex) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  complete(Site, Sex, fill = list(Count = 0)) %>%
+  group_by(Site) %>%
+  mutate(
+    Total = sum(Count),
+    Percentage = round(100 * Count / Total, 1),
+    Label = paste0(Count, "/", Total, "\n(", Percentage, "%)"),
+    Site = factor(Site, levels=c("Site A", "Site B", "Site C"))
+  ) %>%
+  ungroup()
+
+ggplot(data_sex_bad, aes(x = Sex, y = Site, fill = Percentage)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = Label), color = "white", size = 4, fontface = "bold") +
+  scale_fill_gradient(low = "#FFFFFF", high = "#CC00EE", name = "Percentage") +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  ggtitle("Complete Separation") +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "right"
+  )
+```
+
++ Problem: Empty cells indicate some sites recruited only one sex
++ Implication: Cannot separate site effects from sex effects
++ Action: Cannot estimate causal effects across sex groups
+
+```{r, echo=FALSE, fig.height=2, fig.width=5}
+data_sex_bad <- data.frame(
+  Site = rep(c("Site A", "Site B", "Site C"), each = n),
+  Sex = c(sample(c("Male", "Female"), n, replace=TRUE, prob=c(0.9, 0.1)),
+           sample(c("Male", "Female"), n, replace=TRUE, prob=c(0.15, 0.85)),
+           sample(c("Male", "Female"), n, replace=TRUE, prob=c(0.5, 0.5)))
+) %>%
+  group_by(Site, Sex) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  complete(Site, Sex, fill = list(Count = 0)) %>%
+  group_by(Site) %>%
+  mutate(
+    Total = sum(Count),
+    Percentage = round(100 * Count / Total, 1),
+    Label = paste0(Count, "/", Total, "\n(", Percentage, "%)"),
+    Site = factor(Site, levels=c("Site A", "Site B", "Site C"))
+  ) %>%
+  ungroup()
+
+ggplot(data_sex_bad, aes(x = Sex, y = Site, fill = Percentage)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = Label, color = ifelse(Percentage > 50, "white", "black")), 
+            size = 4, fontface = "bold") +
+  scale_fill_gradient(low = "#FFFFFF", high = "#CC00EE",
+                      limits = c(0, 100), name = "Percentage") +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  scale_color_identity() +
+  ggtitle("Extreme Imbalance") +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "right"
+  )
+```
+
++ Problem: Severe imbalances (>80% in one category) across sites
++ Implication: Site effects conflated with demographic composition differences  
++ Action: Use propensity-aware methods or acknowledge population differences
+
+### What not to worry about
+
+```{r, echo=FALSE, fig.height=2, fig.width=5}
+data_sex_bad <- data.frame(
+  Site = rep(c("Site A", "Site B", "Site C"), each = n),
+  Sex = c(sample(c("Male", "Female"), n, replace=TRUE, prob=c(0.55, 0.45)),
+           sample(c("Male", "Female"), n, replace=TRUE, prob=c(0.65, 0.35)),
+           sample(c("Male", "Female"), n, replace=TRUE, prob=c(0.5, 0.5)))
+) %>%
+  group_by(Site, Sex) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  complete(Site, Sex, fill = list(Count = 0)) %>%
+  group_by(Site) %>%
+  mutate(
+    Total = sum(Count),
+    Percentage = round(100 * Count / Total, 1),
+    Label = paste0(Count, "/", Total, "\n(", Percentage, "%)"),
+    Site = factor(Site, levels=c("Site A", "Site B", "Site C"))
+  ) %>%
+  ungroup()
+
+ggplot(data_sex_bad, aes(x = Sex, y = Site, fill = Percentage)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = Label, color = ifelse(Percentage > 50, "white", "black")), 
+            size = 4, fontface = "bold") +
+  scale_fill_gradient(low = "#FFFFFF", high = "#CC00EE",
+                      limits = c(0, 100), name = "Percentage") +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  scale_color_identity() +
+  ggtitle("Acceptable Imbalance") +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "right"
+  )
+```
+
++ Status: Acceptable - all cells have substantial representation
++ Note: Modest imbalances are expected in observational data
++ Action: Standard adjustment methods should work
+
+### Working example -- ABCD
+
+To emphasize the value of heatmaps, we will use the categorical covariate of `income`, which represents the household income bracket (smaller = lower income) for each child under study.
+
+```{r, fig.height = 7, fig.width=8}
+income_dat <- demo_dat %>%
+  drop_na(income) %>%
+  group_by(site, income) %>%
+  mutate(income = factor(income, levels = 1:10)) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  complete(site, income, fill = list(Count = 0)) %>%
+  group_by(site) %>%
+  mutate(
+    Total = sum(Count),
+    Percentage = round(100 * Count / Total, 1),
+    Label = paste0( Percentage, "%")
+  ) %>%
+  ungroup()
+
+ggplot(income_dat, aes(x = income, y = site, fill = Percentage)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = Label, color = ifelse(Percentage > 50, "white", "black")), 
+            size = 4, fontface = "bold") +
+  scale_fill_gradient(low = "#FFFFFF", high = "#CC00EE",
+                      limits = c(0, 50), name = "Percentage") +
+  scale_x_discrete(expand = c(0, 0), name="Income group") +
+  scale_y_discrete(expand = c(0, 0), name="") +
+  scale_color_identity() +
+  ggtitle("Comparison of income demographics by site") +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "right"
+  )
+```
+
+There are heavy demographic imbalances present. Several sites show extremely low representation in multiple income brackets that are highly represented by others, creating sparse cells that violate positivity assumptions. For example:
+
++ Upper income bracket profile extremes: CUB and UMN have about 80% of the data in income groups 8 -- 10, and <5% in income groups 1 -- 5
++ Middle income bracket profile extremes: FIU has >50% of the data in income groups 4 -- 7
++ Lower income bracket profile extremes: UPMC has <20% of the data in income groups 8 -- 10, and >50% in income groups 1 -- 5
+
+Systematic patterns: Sites tend to cluster into distinct socioeconomic profiles as-above, rather than representing balanced populations across income levels. 
+
+Implication: Difficult to separate "Site effects" from socioeconomic effects when sites recruit from fundamentally different populations. Any brain differences between high-income sites (SRI, UCLA) and low-income sites (UPMC, FIU) may reflect socioeconomic disparities rather than technical scanner differences.
+
+## Bivariate plots
+
+Bivariate plots reveal complex multivariate patterns that univariate checks might miss. Even when marginal distributions overlap (e.g., both sites have similar age ranges and sex ratios), the joint distribution of age and sex might differ systematically across sites. For instance, while two sites might sample similar age ranges and be relatively balanced by biological sex, one site might oversample younger women and older men, and the other site the reverse. This is typically done in one of two ways:
+
+### Density estimates
+
+We examine the joint distribution of age and sex across ABCD sites. For each site, we show two density curves (male and female) that together represent the complete age-sex distribution within that site. Optionally, we could also add jittered rugplots at the bottom of the density estimates, to visualize the actual observed ages and biological sexes for individuals in the ABCD study. We omit this step in our demonstration due to restrictions of the ABCD Data Use Agreement.
+
+```{r, fig.height=8, fig.width=10}
+# Create bivariate age-sex distributions by site
+demo_dat %>%
+  filter(!is.na(male), site != "Not reported", site != "Unknown") %>%
+  mutate(Sex = ifelse(male == 1, "Male", "Female")) %>%
+  ggplot(aes(x = age, y = site, fill = Sex, color = Sex)) +
+  geom_density_ridges(alpha = 0.7, scale = 0.9, rel_min_height = 0.01) +
+  # uncomment the below line to add rugplot
+  # geom_jitter(size = 0.2, height = 0.2) +
+  scale_fill_manual(values = c("Male" = "#0022B2", "Female" = "#D50000")) +
+  scale_color_manual(values = c("Male" = "#0022B2", "Female" = "#D50000")) +
+  labs(
+    title = "Joint age-sex distributions across ABCD sites",
+    x = "Age (months)",
+    y = "Site"
+  ) +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    strip.background = element_blank()
+  )
+```
+
+## Important Limitation
+
+**These marginal checks are necessary but not sufficient.** While marginal overlap $f\left(x_j \mid T=t\right) > 0$ for all $j \in \{1, \ldots, d\}$ is required for joint overlap, it does not guarantee that $f\left(x_1, \ldots, x_d \mid T=t\right) > 0$. 
+
+*Example*: Site A might recruit young males and old females, while Site B recruits young females and old males. Each site has both sexes and the full age range (marginal overlap), but no site has young males AND old males together (joint overlap fails).
+
+**Practical implication**: Marginal checks will catch the most egregious violations but may miss subtle multivariate patterns. When stakes are high, consider:
+- Propensity score methods to summarize multivariate overlap
+- Matching procedures that explicitly check for similar participants across groups
+- Sensitivity analyses to assess robustness to potential violations
+
+## Propensity scores
+
+When assessing positivity with many covariates, examining all possible combinations becomes difficult. While blatant positivity violations can often be diagnosed with the simple marginal checks delineated above, some forms of positivity violations are easier to diagnose via the propensity scores. The propensity score is the quantity $e(x) = P(T = 1 \mid X = x)$.
+
+If two participants have the same propensity score, they have the same probability of treatment assignment regardless of their specific covariate values. This dimension reduction makes complex multivariate balance assessable through a single plot.
+
+Consider a scenario with two continuous covariates where treatment assignment depends on both variables in a complex, nonlinear way:
+
+```{r, fig.height=5, fig.width=6}
+colors <- c("0" = "#d95f02", "1" = "#7570b3")
+
+make_covar_sims <- function(n=500, unbalancedness=1, K=2, coef=2) {
+  group <- apply(rmultinom(n, size=1, prob=rep(1/K, K)) == 1, 2, which) - 1
+  
+  xs <- t(sapply(group, function(k) {
+    if (k == 1) {
+      x1 <- rbeta(1, shape1=coef, shape2=unbalancedness*coef)
+      x2 <- rbeta(1, shape1=coef, shape2=unbalancedness*coef)
+    } else {
+      x1 <- rbeta(1, shape1=coef*unbalancedness, shape2=coef)
+      x2 <- rbeta(1, shape1=coef*unbalancedness, shape2=coef)
+    }
+    return(c(x1, x2))
+  }))
+  
+  return(data.frame(Group=factor(group, levels=as.character(0:(K-1))),
+                    "X1"=xs[,1], "X2"=xs[,2]))
+}
+
+covars <- make_covar_sims(n=500, unbalancedness=1.5, coef=2)
+
+p_main <- ggplot(covars, aes(x=X1, y=X2, color=Group)) +
+  geom_point(alpha=0.7, size=1.5) +
+  scale_color_manual(values=colors, name="Group", labels=c("Control", "Treated")) +
+  labs(x="Covariate 1", y="Covariate 2") +
+  theme_bw() +
+  theme(
+    legend.position = c(0.85, 0.85),  # x, y coordinates (0-1)
+    legend.background = element_rect(fill="white", color="black", size=0.3),
+    legend.margin = margin(5, 5, 5, 5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+ggMarginal(p_main, type="density", groupFill=TRUE, alpha=0.6)
+```
+
+**Bivariate covariates** (main plot with marginals): The scatter plot shows that treated participants (blue) cluster in the lower-left region while controls (orange) dominate the upper-right. However, the marginal density plots (top and right) suggest reasonable overlap -- both groups appear across most of the range for each individual covariate.
+
+**The hidden problem**: While each covariate individually shows overlap between groups, the joint distribution reveals poor positivity. Participants in the lower-left region (low values on both covariates) are almost exclusively treated, while those in the upper-right (high values on both covariates) are almost exclusively controls.
+
+For binary treatments, propensity scores are typically estimated using logistic regression:
+
+$$\text{logit}(e(x)) = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \ldots$$
+
+The fitted probabilities from this model provide the propensity score estimates. In our example:
+
+```{r}
+ps_model <- glm(Group ~ X1 + X2, data=covars, family = binomial(link = "logit"))
+covars$Propensity <- predict(ps_model, type = "response")
+```
+
+**Multiple treatments**: For studies with more than two treatment groups (e.g., the ABCD study), generalized propensity scores can be estimated using multinomial logistic regression, providing separate probabilities for each treatment level.
+
+**Alternative estimation methods**: While logistic regression is standard, other approaches may capture complex treatment assignment patterns better:
+
++ Machine learning methods: Random forests, neural networks, or gradient boosting for nonlinear relationships
++ Bayesian approaches: When prior information about treatment assignment is available
++ Ensemble methods: Combining multiple estimation approaches for robustness
+
+The propensity score reveals what the bivariate plot suggested -- poor overlap between treatment groups:
+
+```{r, fig.height=4, fig.width=6}
+ggplot(covars, aes(color=Group, group=Group, fill=Group)) +
+  geom_histogram(aes(x=Propensity, y=..ncount../max(..ncount..)), 
+                 bins=30, position="identity", alpha=0.5) +
+  geom_jitter(aes(x=Propensity, y=ifelse(as.numeric(Group) == 1, -.1, 1.1)), 
+              height=.1, alpha=0.7, size=1) +
+  scale_fill_manual(values=colors, name="Treatment", 
+                    labels=c("Control", "Treated")) +
+  scale_color_manual(values=colors, name="Treatment", 
+                     labels=c("Control", "Treated")) +
+  labs(y="Normalized Count", x="Propensity Score") +
+  theme_bw() +
+  theme(panel.grid=element_blank()) +
+  scale_y_continuous(limits=c(-.23, 1.23), breaks=c(0, .5, 1)) +
+  scale_x_continuous(limits=c(0, 1))
+```
+
+What this reveals: Many participants have propensity scores near 0 (almost certainly control) or near 1 (almost certainly treated), with fewer in the intermediate range (0.3-0.7). This lack of overlap in the propensity scores indicates that treatment assignment is quite deterministic given the covariates -- these characteristics can be signs of violations of positivity, or that we may need alternative strategies (i.e., positivity-aware methods) to reach stable causal conclusions.
+
+**Key insight**: The propensity score distribution makes violations immediately obvious that would be difficult to detect with many covariates. Participants with extreme scores (>0.9 or <0.1) represent regions where causal insights we might wish to form would rely heavily on extrapolation rather than observed counterfactuals.
+
+## Multi-feature visualizations
+
+When datasets are expansive (large numbers of individuals, many features of interest, or many potential exposure levels of interest), another simple visualization is to reduce the complexity of individual features to single summary statistics. While these approaches are hardly adequate for making definitive positivity assessments, they can be useful for exploratory analyses to determine which features of the data may merit more in-depth consideration.
+
+### Data preparation
+
+First, we normalize all covariates to enable comparison across different scales:
+
+```{r}
+# Define which variables are continuous (vs categorical/binary)
+continuous_vars <- c("age", "pc1", "pc2", "pc3", "parental_education", "income")
+
+# Calculate site-specific means and normalize them
+normalized_data <- demo_dat %>%
+  # Convert to long format for easier processing
+  pivot_longer(cols = male:parental_education,
+               names_to = "variable",
+               values_to = "value") %>%
+  
+  # Calculate 5th and 95th percentiles for normalization bounds
+  group_by(variable) %>%
+  mutate(
+    upper.q = quantile(value, probs = 0.95, na.rm = TRUE),
+    lower.q = quantile(value, probs = 0.05, na.rm = TRUE)
+  ) %>%
+  
+  # Calculate mean values by site and variable
+  group_by(site, variable, upper.q, lower.q) %>%
+  summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+  
+  # Normalize: continuous vars to 0-1 scale, categorical vars keep as proportions
+  mutate(normalized_mean = if_else(
+    variable %in% continuous_vars,
+    (mean_value - lower.q) / (upper.q - lower.q),  # Min-max normalization
+    mean_value  # For binary/categorical: proportion is already meaningful
+  )) %>%
+  
+  # Clean up variable names and ordering
+  select(site, variable, normalized_mean) %>%
+  mutate(variable = factor(variable,
+                          levels = c("male", "White", "Black", "Asian", "Latinx",
+                                   "age", "pc1", "pc2", "pc3", "parental_education",
+                                   "income", "anesthesia_exposure", "Right-handed"),
+                          ordered = TRUE)) %>%
+  mutate(variable = recode_factor(variable,
+                                "male" = "Percent biological male",
+                                "White" = "Percent White",
+                                "Black" = "Percent Black", 
+                                "Asian" = "Percent Asian",
+                                "Latinx" = "Percent Latinx",
+                                "age" = "Age",
+                                "pc1" = "General ability PC",
+                                "pc2" = "Exec. function PC", 
+                                "pc3" = "Learning/memory PC",
+                                "parental_education" = "Parental education",
+                                "income" = "Parental income",
+                                "anesthesia_exposure" = "Any anesthesia exposure"))
+```
+
+For comparison, we calculate the overall dataset average for each variable:
+
+```{r}
+# Calculate dataset-wide averages using same normalization
+dset_avg_norm <- demo_dat %>%
+  pivot_longer(cols = male:parental_education,
+               names_to = "variable", 
+               values_to = "value") %>%
+  group_by(variable) %>%
+  mutate(
+    upper.q = quantile(value, probs = 0.95, na.rm = TRUE),
+    lower.q = quantile(value, probs = 0.05, na.rm = TRUE)
+  ) %>%
+  group_by(variable, upper.q, lower.q) %>%
+  summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+  mutate(normalized_mean = if_else(
+    variable %in% continuous_vars,
+    (mean_value - lower.q) / (upper.q - lower.q),
+    mean_value
+  )) %>%
+  mutate(variable = factor(variable,
+                          levels = c("male", "White", "Black", "Asian", "Latinx",
+                                   "age", "pc1", "pc2", "pc3", "parental_education", 
+                                   "income", "anesthesia_exposure", "Right-handed"),
+                          ordered = TRUE)) %>%
+  mutate(variable = recode_factor(variable,
+                                "male" = "Percent biological male",
+                                "White" = "Percent White",
+                                "Black" = "Percent Black",
+                                "Asian" = "Percent Asian", 
+                                "Latinx" = "Percent Latinx",
+                                "age" = "Age",
+                                "pc1" = "General ability PC",
+                                "pc2" = "Exec. function PC",
+                                "pc3" = "Learning/memory PC", 
+                                "parental_education" = "Parental education",
+                                "income" = "Parental income",
+                                "anesthesia_exposure" = "Any anesthesia exposure"))
+```
+
+Which can be visualized:
+
+```{r}
+normalized_data %>%
+  ggplot(aes(x = normalized_mean, y = variable)) +
+  # Site-specific means (colored points)
+  geom_point(aes(color = site), alpha = 0.7, size = 2, 
+             position = position_dodge(width = 0.3)) +
+  # Overall dataset average (black crosses)
+  geom_point(data = dset_avg_norm, color = "black", size = 4, 
+             shape = "+", stroke = 2) +
+  scale_x_continuous(limits = c(0, 1), expand = c(0, 0), 
+                     name = "Normalized mean (per-site)") +
+  scale_y_discrete(name = "Demographic covariate") +
+  ggtitle("Demographic Confounding in the ABCD Study") +
+  scale_color_manual(values = site_colors, name = "Site") +
+  theme_bw() +
+  theme(
+    legend.position = "right",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    text = element_text(size = 12)
+  )
+```
+
+**Interpretation**: Each colored point represents a site's average for that variable (normalized to 0-1 scale). The black "+" marks show the overall dataset average. Substantial horizontal spread indicates covariate imbalance across sites.
+
+Key patterns:
+
++ Race/ethnicity: Dramatic differences, with some sites recruiting predominantly one group
++ Socioeconomic factors: Clear income and education gradients across sites
++ Age: Relatively balanced, but some sites skew younger/older
++ Cognitive measures: Principal components show site differences in baseline abilities
+
+**Positivity implications**: Variables with wide horizontal spread indicate potential violations. For example, if studying income effects, sites at opposite ends of the income spectrum provide little basis for comparison.

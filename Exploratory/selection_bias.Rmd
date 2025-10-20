@@ -1,0 +1,416 @@
+---
+title: 'Appendix B.2.2: How causal perspectives can inform neuroscience data analysis'
+author: "Eric W. Bridgeford"
+date: "2025-08-01"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: false
+    fig_crop: true
+    highlight: tango
+  html_document: default
+header-includes:
+  - \usepackage{microtype}
+  - \usepackage{ragged2e}
+  - \raggedright
+  - \pagestyle{empty}
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  dpi = 300,
+  out.width = "100%",
+  fig.align = "center",
+  dev = "cairo_pdf"
+)
+```
+
+This notebook focuses on exploratory analyses one might use to assess for disparities in datasets due to selection mechanics.
+
+```{r}
+require(tidyverse)
+require(dplyr)
+require(ggplot2)
+require(jsonlite)
+require(ggridges)
+require(patchwork)
+require(collapse)
+require(grid)
+require(gridExtra)
+require(knitr)
+require(ggExtra)
+require(ggdag)
+require(dagitty)
+```
+
+# Visualizations of identification issues
+
+For assessing selection-related issues, we will build off the example in Appendix B.2 on head motion. Let's start with setting up a graph using DAGitty. The exposure is Neural Substrates, measured via Connectivity Measures, and the outcome is Behavioral Traits (e.g., ADHD). Demographics are a common cause of Neural Substrates, Motion, and Behavioral Traits. We will begin with the DAG in Figure 5(A). 
+
+```{r}
+
+# Figure 5(A)
+dag_5a <- dagify(
+  Y ~ E + X1,
+  E ~ X1,
+  R ~ X1,
+  R ~ Y,
+  Es ~ R + E,
+  exposure = "E",
+  outcome = "Y",
+  coords = list(x = c(X1 = 2, R = 2, E=1, Y=3, Es=2),
+                y = c(X1=2, R=1, E=0, Y=0, Es=-1))
+)
+
+# Plot Figure 5(A)
+ggdag(dag_5a) + 
+  theme_dag() + 
+  theme(text = element_text(color = "black")) +
+  scale_color_manual(values = c("black")) +
+  scale_fill_manual(values = c("white")) +
+  ggtitle("Figure 5(A): Observational brain-behavior study")
+```
+
+Next, let's check whether causal identification is possible with `X1` and `R`:
+
+```{r}
+AdjSet <- list("X1", "R")
+sprintf("Causal identification possible: %s", isAdjustmentSet(dag_5a, AdjSet, 
+                                                              exposure = "E", 
+                                                              outcome = "Y"))
+```
+
+which indicates that this a conditioning set which simultaneously conditions on Demographics `X1` (to mitigate common causes) and Motion `R` (to mitigate the differential measurement error) does not permit causal inferences about the relationship between Neural Substrates `E` with Behavioral Traits `Y`. We can further check all the possible adjustment sets, to see whether there is any sufficient conditioning set including Motion `R`:
+
+```{r}
+adjustmentSets(dag_5a, exposure="E", outcome="Y")
+```
+which shows that no approach which conditions on Motion `R` could permit causal inferences about the relationship between the exposure Neural Substrates `E` and the outcome Behavioral Traits `Y` (there are no possible adjustment sets including `R`).
+
+# Reading the ABCD dataset
+
+## Demographic Data
+
+For reading demographic data from the ABCD study, we repeat the same procedure described in Appendix A.3.3. 
+
+```{r}
+demo_key <- read_json("../data/abcd/demo_key.json")
+
+site_key <- unlist(demo_key$site$Levels)[1:21]
+match_key <- unlist(demo_key$matched_group$Levels)
+sex_key <- unlist(demo_key$sex$Levels)
+
+raw_demo_dat <- read_tsv("../data/abcd/demographics.tsv")
+```
+
+```{r}
+# pre-process the data using the demographics key
+demo_dat <- raw_demo_dat %>%
+  rename("Latinx" = `Do you consider the child Hispanic/Latino/Latina?`,
+         "Black"=`Black/African American`) %>%
+  filter(site != "site22", site != "888") %>%
+  mutate(
+    White = ifelse(White == 1, 1, ifelse(White == 0, 0, NA)),
+    Black = ifelse(Black == 1, 1, ifelse(Black == 0, 0, NA)),
+    Chinese = ifelse(Chinese == 1, 1, ifelse(Chinese == 0, 0, NA)),
+    Vietnamese = ifelse(Vietnamese == 1, 1, ifelse(Vietnamese == 0, 0, NA)),
+    Filipino = ifelse(Filipino == 1, 1, ifelse(Filipino == 0, 0, NA)),
+    Japanese = ifelse(Japanese == 1, 1, ifelse(Japanese == 0, 0, NA)),
+    `Other Asian` = ifelse(`Other Asian` == 1, 1, 
+                           ifelse(`Other Asian` == 0, 0, NA)),
+    pc1=ifelse(pc1 != 888, pc1, NA),
+    pc2=ifelse(pc2 != 888, pc2, NA),
+    pc3=ifelse(pc3 != 888, pc3, NA),
+    parental_education=ifelse(parental_education %in% c(999, 777, 888),
+                              NA, parental_education),
+    Korean = ifelse(Korean == 1, 1, ifelse(Korean == 0, 0, NA)),
+    income = ifelse(income %in% c(777, 888, 999), NA, income),
+    anesthesia_exposure=ifelse(anesthesia_exposure == 888, NA, 
+                               ifelse(anesthesia_exposure > 0, 1, 0)),
+    site = fct_recode(factor(site), !!!setNames(names(site_key), site_key)),
+    male = ifelse(sex == 1, 1, ifelse(sex %in% c(2, 3, 4), 0, NA)),
+    matched_group = factor(matched_group),
+    Latinx=ifelse(Latinx == 1, 1, ifelse(Latinx == 2, 0, NA)),
+    handedness=ifelse(handedness == 1, 1, ifelse(handedness %in% c(2, 3), 0, NA))
+  ) %>%
+  filter(grepl("ses-baseline", session_id), matched_group %in% c(1, 2, 3)) %>%
+  mutate(Asian = as.numeric(Chinese + Vietnamese + Filipino + 
+                              Japanese + `Other Asian` + Korean > 0)) %>%
+  rename("Right-handed"=handedness) %>%
+  select(participant_id, site, male, White, Black, Asian, Latinx, age, income,
+         anesthesia_exposure, pc1, pc2, pc3, `Right-handed`, parental_education)
+
+# create a color vector for each site
+site_colors <- c(
+  "OHSU" = "#E31A1C", "UCSD" = "#1F78B4", "ROC" = "#33A02C", "WUSTL" = "#FF7F00",
+  "UMB" = "#6A3D9A", "UVM" = "#FFD700", "FIU" = "#A6CEE3", "UFL" = "#B2DF8A",
+  "LIBR" = "#FB9A99", "UMN" = "#FDBF6F", "VCU" = "#CAB2D6", "UTAH" = "#8B4513",
+  "CUB" = "#FF69B4", "MUSC" = "#00CED1", "CHLA" = "#32CD32", "UMICH" = "#FF1493",
+  "UCLA" = "#4169E1", "SRI" = "#FF8C00", "UPMC" = "#9932CC", "UWM" = "#008B8B",
+  "YALE" = "#DC143C"
+)
+```
+
+## Head motion and CBCL data
+
+For this portion of the experiment, we will need to acquire the raw head motion and CBCL data for the ABCD participants, and then pre-process the data to merge it with the demographic data (above). The specific file obtained from the ABCD repository is "Release 5.0 Raw Data - June 2023 (4 GB)". For the purposes of this investigation, we will need the files `mh_cbcl.csv` and `mri_motion.csv`. 
+
+```{r}
+cbcl_raw <- read.csv("../data/abcd/mh_cbcl.csv")
+motion_raw <- read.csv("../data/abcd/mri_motion.csv")
+```
+
+### CBCL survey data
+
+The Child Behavior Checklist (CBCL) is a widely-used parent-report questionnaire that assesses behavioral and emotional problems in children and adolescents aged 6-18 years. Developed by Thomas Achenbach, the CBCL consists of 113 items that parents rate on a 3-point scale (0 = not true, 1 = somewhat or sometimes true, 2 = very true or often true) based on their child's behavior over the past 6 months. We will use the CBCL scores for children to assess their ADHD symptom presentations. We will extract the following columns from the data:
+
++ cbcl_scr_dsm5_adhd_r: Recommended ADHD CBCL DSM5 Scale (raw score)
++ cbcl_scr_dsm5_adhd_t: Recommended ADHD CBCL DSM5 Scale (t-score)
++ cbcl_scr_dsm5_adhd_m: Recommended ADHD CBCL DSM5 Scale (missing values)		
++ cbcl_scr_dsm5_adhd_nm: Recommended ADHD CBCL DSM5 Scale (number of missing values)
+
+Which were obtained by cross-referencing the ABCD key taken from [here](https://data-dict.abcdstudy.org/?). These will allow us to assess the symptomologies of individuals for ADHD who would be excluded by subsequent head motion filters. Note that to subsequently leverage this data (which is not pre-processed) with the demographic data from above (which was pre-processed), we will need to revise the participant ID columns to be equivalent formats.
+
+```{r}
+cbcl_dat <- cbcl_raw %>%
+  filter(eventname == "baseline_year_1_arm_1") %>%
+  select(src_subject_id, cbcl_scr_dsm5_adhd_t, cbcl_scr_dsm5_adhd_r, 
+         cbcl_scr_dsm5_adhd_nm, cbcl_scr_dsm5_adhd_m) %>%
+  # revise column names to be more informative
+  rename(participant_id=src_subject_id, ADHD.raw=cbcl_scr_dsm5_adhd_r,
+         ADHD.tscore=cbcl_scr_dsm5_adhd_t, ADHD.mv=cbcl_scr_dsm5_adhd_m,
+         ADHD.nmissing=cbcl_scr_dsm5_adhd_nm) %>%
+  # revise participant_id column format to same as ABCC demographic file
+  mutate(participant_id = str_replace(participant_id, "^([A-Z]+)_([A-Z]+.*)$", 
+                                      "sub-\\1\\2"))
+```
+
+
+### Motion file data
+
+The ABCD study includes useful information regarding head motion from one frame to the next across fMRI scanning sessions. Here, we are concerned with resting state fMRI (rsfMRI) motion parameters. We will extract the following columns from the data:
+
++ rsfmri_meanmotion: Resting state fMRI - Average framewise displacement in mm
++ rsfmri_subthreshnvols: Resting state fMRI - Number of frames with FD < 0.2
++ rsfmri_subthreshcontignvols: Resting state fMRI - Number of frames with FD < 0.2 and at least 5 contiguous, supra-threshold frames
+
+Which were obtained by cross-referencing the ABCD key taken from [here](https://data-dict.abcdstudy.org/?). These will allow us to assess the head motion characteristics of individuals so that we can assess who would (or would not) meet typical exclusion criteria.
+
+```{r}
+motion_dat <- motion_raw %>%
+  filter(eventname == "baseline_year_1_arm_1") %>%
+  select(src_subject_id, rsfmri_meanmotion, rsfmri_subthreshnvols,
+         rsfmri_subthreshcontignvols) %>%
+  # revise column names to be more informative
+  rename(participant_id=src_subject_id, MeanMotion=rsfmri_meanmotion, 
+         NVolumes=rsfmri_subthreshnvols,
+         NVolsContiguous=rsfmri_subthreshcontignvols) %>%
+  # revise participant_id column format to same as ABCC demographic file
+  mutate(participant_id = str_replace(participant_id, "^([A-Z]+)_([A-Z]+.*)$",
+                                      "sub-\\1\\2"))
+```
+
+Finally, we can merge the demographic data with the pre-processed CBCL and motion data from above, using sequences of left joins on the `participant_id` column:
+
+```{r}
+# merge in the adhd annotation data with the original demographic data
+merge_demo_cbcl_motion <- demo_dat %>%
+  left_join(cbcl_dat, by=c("participant_id"="participant_id")) %>%
+  left_join(motion_dat, by=c("participant_id"="participant_id"))
+```
+
+As a first-pass, we begin by plotting a histogram of the CBCL scores:
+
+```{r, fig.height=3, fig.width=6}
+cbcl.raw.plt <- merge_demo_cbcl_motion %>%
+  ggplot(aes(ADHD.raw)) +
+    geom_histogram(binwidth=1, color="black", fill="white") +
+    scale_y_continuous(name="Number of Individuals") +
+    scale_x_continuous(name="Recommended ADHD CBCL DSM5 Scale (raw score)") +
+    ggtitle("(A) Child Behavior Checklist Raw Scores") +
+    theme_bw() +
+    theme(legend.position = "right", panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(), text=element_text(size=15))
+plot(cbcl.raw.plt)
+```
+
+Most children appear to have CBCL Raw scores on the lower end, and the distribution is right-skewed. 
+
+Next, for each possible raw score, we will assess how much patients tend to move on average (mean FD, in mm) and the number of volumes with sufficiently low motion (Volumes with FD < 0.2 mm). We do this by grouping on CBCL raw scores, and then apply summary statistics for the mean FD and the mean number of volumes with sufficiently low motion per participant:
+
+```{r}
+sum.merged <- merge_demo_cbcl_motion %>%
+  group_by(ADHD.raw) %>%
+  summarize(N.MeanMotion =sum(!is.na(MeanMotion)),
+            SE.MeanMotion=sd(MeanMotion, na.rm=TRUE)/sqrt(N.MeanMotion),
+            Mean.MeanMotion=mean(MeanMotion, na.rm=TRUE),
+            N.NVolumes=sum(!is.na(NVolumes)), 
+            SE.NVolumes=sd(NVolumes, na.rm=TRUE)/sqrt(N.NVolumes), 
+            Mean.NVolumes=mean(NVolumes, na.rm=TRUE),
+            N.NVolsCont =sum(!is.na(NVolsContiguous)), 
+            SE.NVolsCont=sd(NVolsContiguous, na.rm=TRUE)/sqrt(N.NVolsCont), 
+            Mean.NVolsCont=mean(NVolsContiguous, na.rm=TRUE)) %>%
+  ungroup() %>%
+  pivot_longer(
+    cols = -ADHD.raw,
+    names_to = c(".value", "Measure"),
+    names_pattern = "(N|SE|Mean)\\.(.+)"
+  )
+```
+
+Next, we plot the motion summary statistics for each group, along with with the standard errors:
+
+```{r, fig.height=5, fig.width=8}
+plt.excl_criteria <- sum.merged %>%
+  mutate(Measure=recode_factor(Measure, "MeanMotion"="I. Mean FD (mm)", 
+                               "NVolumes"="II. Volumes < 0.2 mm FD")) %>%
+  filter(Measure != "NVolsCont") %>%
+  ggplot(aes(x=ADHD.raw)) +
+    geom_point(aes(y=Mean)) +
+    geom_errorbar(aes(ymin = Mean - SE, ymax=Mean + SE)) +
+    scale_x_continuous(name="Recommended ADHD CBCL DSM5 Scale (raw score)") +
+    scale_y_continuous(name="Average framewise displacement (mm)") +
+    facet_grid(Measure~., scale="free_y", switch = "y") +
+    theme_bw() +
+    ggtitle("(B) Selection differences by ADHD diagnostic score") +
+    theme(
+      legend.position = "right", panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(), 
+      strip.text.y.left = element_text(angle = 90, hjust = 0.5, size=15),
+      axis.title.y = element_blank(),
+      text=element_text(size=15),
+      strip.background = element_blank(),
+      strip.placement = "outside"
+    )
+plot(plt.excl_criteria)
+```
+In (B.I), individuals with lower CBCL scores tend to show lower FDs. This suggests that filtering approaches at the individual-level (e.g., excluding individuals entirely who have higher mean FD) will tend to disproportionately filter individuals more symptomatic of ADHD. In (B.II), we show the average number of volumes retained after scrubbing volumes with FD $> 0.2$ mm across individuals with a given CBCL raw score. Individuals with lower CBCL scores tend to have more volumes retained after scrubbing. This suggests that filtering data approaches within-individuals will disproportionately discard more data from individuals more symptomatic of ADHD.
+
+Finally, we explore the demographic consequences of motion exclusion criteria. We assume a motion exclusion threshold of 0.5mm (on average) over the course of a scanning session, which is a typically used value for motion exclusion. Individuals for whom motion exceeds 0.5mm (on average) would be excluded from the subsequent analysis, and individuals for whom motion is less than 0.5mm (on average) would be included in the subsequent analysis. As in Appendix B.3.3, we then compute summary measures for the Included and Excluded samples, to assess whether there are discernable differences in the characteristics of who is excluded vs included in subsequent analyses.
+
+```{r}
+# Define which variables are continuous (vs categorical/binary)
+continuous_vars <- c("age", "pc1", "pc2", "pc3", "parental_education",
+                     "income", "ADHD.raw")
+
+# exclusion criterion of 0.5 mm
+excl_mean = 0.5
+
+# compute per-group summary statistics for included and excluded groups
+merged_covar_excluded_normdat <- (merged_covar_excluded <- merge_demo_cbcl_motion %>%
+  mutate(Sample=ifelse(MeanMotion < 0.5, "Incl. (Mean FD < 0.5)",
+                       ifelse(!is.na(MeanMotion), "Excl. (Mean FD > 0.5)", NA)))) %>%
+  filter(!is.na(Sample)) %>%
+  select(-c("MeanMotion", "NVolumes", "NVolsContiguous", "ADHD.tscore",
+            "ADHD.nmissing", "ADHD.mv")) %>%
+  pivot_longer(cols = male:ADHD.raw,
+               names_to = "variable",
+               values_to = "value") %>%
+  group_by(variable) %>%
+  mutate(
+    upper.q = quantile(value, probs=0.95, na.rm=TRUE), 
+    lower.q = quantile(value, probs=0.05, na.rm=TRUE)
+  ) %>%
+  group_by(Sample, variable, upper.q, lower.q) %>%
+  summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+  # Different normalization for continuous vs categorical
+  mutate(normalized_mean = if_else(
+    variable %in% continuous_vars,
+    (mean_value - lower.q) / (upper.q - lower.q),
+    mean_value  # for categorical, just use the mean (proportion) directly
+  )) %>%
+  select(Sample, variable, normalized_mean) %>%
+  mutate(variable = as.character(variable)) %>%
+  mutate(variable = factor(variable, 
+                           levels = c("male", "White", "Black", "Asian", "Latinx",
+                                      "age", "pc1", "pc2", "pc3", "parental_education",
+                                      "income", "anesthesia_exposure", "Right-handed",
+                                      "ADHD.raw"), 
+                           ordered = TRUE)) %>%
+  mutate(variable = recode_factor(variable,  
+                                  "male" = "Percent biological male",
+                                  "White"="Percent White",
+                                  "Black"="Percent Black",
+                                  "Asian"="Percent Asian",
+                                  "Latinx"="Percent Latinx",
+                                  "age" = "Age",
+                                  "pc1" = "General ability PC", 
+                                  "pc2" = "Exec. function PC", 
+                                  "pc3" = "Learning/memory PC",
+                                  "parental_education" = "Parental education", 
+                                  "income" = "Parental income",
+                                  "anesthesia_exposure" = "Any anesthesia exposure",
+                                  "Right-handed"="Right-handed",
+                                  "ADHD.raw"="ADHD CBCL DSM5 Scale"))
+```
+
+We then compute the sample averages:
+
+```{r}
+# compute overall sample averages
+dset_avg_norm_adhd <- merge_demo_cbcl_motion %>%
+  select(-c("MeanMotion", "NVolumes", "NVolsContiguous", "ADHD.tscore", 
+            "ADHD.nmissing", "ADHD.mv")) %>%
+  pivot_longer(cols = male:ADHD.raw,
+               names_to = "variable",
+               values_to = "value") %>%
+  group_by(variable) %>%
+  mutate(
+    upper.q = quantile(value, probs=0.95, na.rm=TRUE), 
+    lower.q = quantile(value, probs=0.05, na.rm=TRUE)
+  ) %>%
+  group_by(variable, upper.q, lower.q) %>%
+  summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+  # Different normalization for continuous vs categorical
+  mutate(normalized_mean = if_else(
+    variable %in% continuous_vars,
+    (mean_value - lower.q) / (upper.q - lower.q),
+    mean_value  # for categorical, just use the mean (proportion) directly
+  )) %>%
+  mutate(variable = factor(variable, 
+                           levels = c("male", "White", "Black", "Asian", "Latinx",
+                                      "age", "pc1", "pc2", "pc3", "parental_education",
+                                      "income", "anesthesia_exposure", "Right-handed",
+                                      "ADHD.raw"), 
+                           ordered = TRUE)) %>%
+  mutate(variable = recode_factor(variable,  
+                                  "male" = "Percent biological male",
+                                  "White"="Percent White",
+                                  "Black"="Percent Black",
+                                  "Asian"="Percent Asian",
+                                  "Latinx"="Percent Latinx",
+                                  "age" = "Age",
+                                  "pc1" = "General ability PC", 
+                                  "pc2" = "Exec. function PC", 
+                                  "pc3" = "Learning/memory PC",
+                                  "parental_education" = "Parental education", 
+                                  "income" = "Parental income",
+                                  "anesthesia_exposure" = "Any anesthesia exposure",
+                                  "Right-handed"="Right-handed",
+                                  "ADHD.raw"="ADHD CBCL DSM5 Scale"))
+```
+
+Finally, we plot as before the characteristics for the included and excluded samples:
+
+```{r, fig.height=5, fig.width=12}
+covar.tbl.incl_excl <- merged_covar_excluded_normdat %>%
+  ggplot(aes(x = normalized_mean, y = variable)) +
+    geom_point(aes(color = Sample, group = Sample), alpha = 0.7, size=3) +
+    geom_point(data=dset_avg_norm_adhd, color="black", size=8, shape="+") +
+    scale_x_continuous(limits = c(0, 1), expand = c(0, 0),
+                       name = "Normalized mean (by incl./excl. criteria)") +
+    scale_y_discrete(name = "Demographic covariate") +
+    ggtitle("(C) Differences in Demographics (by Mean FD group)") +
+    theme_bw() +
+    theme(
+      legend.position = "right",
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      text=element_text(size=15)
+    )
+plot(covar.tbl.incl_excl)
+```
+Excluded samples by a coarse inclusion/exclusion threshold of 0.5mm would tend to show higher CBCL raw scores (correlated with ADHD), have lower neurocognitive performance (learning/memory, executive function, and general ability PCs derived from neurocognitive tests), be younger, from traditionally underserved racial and economic backgrounds (Black, lower income, lower parental education), and would be more likely to be parent-identified as male.
+
