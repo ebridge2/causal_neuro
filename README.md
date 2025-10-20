@@ -17,7 +17,7 @@ Over the past two decades, considerable strides have been made in advancing neur
 ## Repo Contents
 
 - [Exploratory](./Exploratory): Rmarkdown documents with detailed causal exploratory analyses.
-- - [Figures](./figures): figures for our manuscript.
+- [Figures](./figures): figures for our manuscript.
 
 ## System Requirements
 
